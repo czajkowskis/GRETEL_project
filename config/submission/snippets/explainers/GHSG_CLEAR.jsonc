@@ -1,0 +1,4 @@
+{
+    "class": "src.explainer.generative.clear.CLEARExplainer",
+    "parameters": { "epochs": 1 }
+}

@@ -1,0 +1,4 @@
+{
+    "class": "src.explainer.generative.gcountergan.GCounteRGAN",
+    "parameters": { "epochs": 150 }
+}
