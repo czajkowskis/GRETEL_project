@@ -178,10 +178,15 @@ class TorchBase(Trainable):
                 optimizer.step()
 
             accuracy = self.accuracy(labels_list, preds)
-            self.context.logger.info(f'epoch = {epoch} ---> loss = {np.mean(losses):.4f}\t accuracy = {accuracy:.4f}')
+            mean_loss = np.mean(losses)
+            self.context.logger.info(f'epoch = {epoch} ---> loss = {mean_loss:.4f}\t accuracy = {accuracy:.4f}')
             scheduler.step()
-        print(f"mean loss: {np.mean(losses)}")
-        return np.mean(losses)
+
+            trial.report(mean_loss, epoch+1)
+            if trial.should_prune():
+                raise optuna.TrialPruned()
+
+        return mean_loss
     
     def get_best_hyperparameters(self):
         study = optuna.create_study(study_name="GCN optimization")

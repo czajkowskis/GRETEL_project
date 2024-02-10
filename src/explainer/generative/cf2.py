@@ -7,6 +7,8 @@ from src.core.explainer_base import Explainer
 from src.core.trainable_base import Trainable
 from src.core.oracle_base import Oracle
 
+import optuna
+
 
 class CF2Explainer(Trainable, Explainer):
 
@@ -29,6 +31,8 @@ class CF2Explainer(Trainable, Explainer):
             self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay
         )
 
+        self.optimize_hyperparameters = self.local_config['parameters']['optimize_hyperparameters']
+
     def check_configuration(self):
         super().check_configuration()
         self.local_config['parameters']['batch_size_ratio'] =  self.local_config['parameters'].get('batch_size_ratio', 0.1)
@@ -38,6 +42,7 @@ class CF2Explainer(Trainable, Explainer):
         self.local_config['parameters']['lam'] =  self.local_config['parameters'].get('lam', 1e-4)
         self.local_config['parameters']['alpha'] =  self.local_config['parameters'].get('alpha', 1e-4)
         self.local_config['parameters']['epochs'] =  self.local_config['parameters'].get('epochs', 200)
+        self.local_config['parameters']['optimize_hyperparameters'] = self.local_config['parameters'].get('optimize_hyperparameters', False)
 
         # fix the number of nodes
         n_nodes = self.local_config['parameters'].get('n_nodes', None)
@@ -46,24 +51,50 @@ class CF2Explainer(Trainable, Explainer):
         self.local_config['parameters']['n_nodes'] = n_nodes
 
     def real_fit(self):
-        self.model.train()
+        if self.optimize_hyperparameters:
+            best_hyperparameters = self.get_best_hyperparameters()
+            self.optimizer = torch.optim.Adam(
+                self.model.parameters(), lr=best_hyperparameters['lr'], weight_decay=best_hyperparameters['weight_decay']
+            )
 
-        for epoch in range(self.epochs):         
-            losses = list()
+            self.model.train()
 
-            for graph in self.dataset.instances:
-                pred1, pred2 = self.model(graph, self.oracle)
-                loss = self.model.loss(graph,
-                                           pred1, pred2,
-                                           self.gamma, self.lam,
-                                           self.alpha)
-                
-                losses.append(loss.to('cpu').detach().numpy())
-                loss.backward()
-                self.optimizer.step()
-            self.context.logger.info(f"Epoch {epoch+1} --- loss {np.mean(losses)}")
+            for epoch in range(self.epochs):         
+                losses = list()
+
+                for graph in self.dataset.instances:
+                    pred1, pred2 = self.model(graph, self.oracle)
+                    loss = self.model.loss(graph,
+                                            pred1, pred2,
+                                            best_hyperparameters['gamma'], best_hyperparameters['lam'],
+                                            best_hyperparameters['alpha'])
+                    
+                    losses.append(loss.to('cpu').detach().numpy())
+                    loss.backward()
+                    self.optimizer.step()
+                self.context.logger.info(f"Epoch {epoch+1} --- loss {np.mean(losses)}")
+            
+            self.model._fitted = True
         
-        self.model._fitted = True
+        else:
+            self.model.train()
+
+            for epoch in range(self.epochs):         
+                losses = list()
+
+                for graph in self.dataset.instances:
+                    pred1, pred2 = self.model(graph, self.oracle)
+                    loss = self.model.loss(graph,
+                                            pred1, pred2,
+                                            self.gamma, self.lam,
+                                            self.alpha)
+                    
+                    losses.append(loss.to('cpu').detach().numpy())
+                    loss.backward()
+                    self.optimizer.step()
+                self.context.logger.info(f"Epoch {epoch+1} --- loss {np.mean(losses)}")
+            
+            self.model._fitted = True
 
     def explain(self, instance : GraphInstance):
 
@@ -92,7 +123,50 @@ class CF2Explainer(Trainable, Explainer):
             cf_instance._nx_repr = None
 			
             return cf_instance
+        
+    # Hyperparameter search related functions
+    
+    def optuna_objective(self, trial):
+        lr =  trial.suggest_float("lr", 1e-4, 1e-1)
+        weight_decay = trial.suggest_float("weight_decay", 0, 1)
+        gamma = trial.suggest_float("gamma", 1e-6, 1e-2)
+        lam = trial.suggest_float("lam", 1e-6, 1e-2)
+        alpha = trial.suggest_float("alpha", 1e-6, 1e-2)
 
+        model = ExplainModelGraph(self.n_nodes).to(self.device)
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=lr, weight_decay=weight_decay
+        )
+
+        model.train()
+
+        for epoch in range(self.epochs):         
+            losses = list()
+
+            for graph in self.dataset.instances:
+                pred1, pred2 = model(graph, self.oracle)
+                loss = model.loss(graph,
+                                           pred1, pred2,
+                                           gamma, lam,
+                                           alpha)
+                
+                losses.append(loss.to('cpu').detach().numpy())
+                loss.backward()
+                optimizer.step()
+
+            mean_loss = np.mean(losses)
+            self.context.logger.info(f"Epoch {epoch+1} --- loss {mean_loss}")
+            trial.report(mean_loss, epoch+1)
+            if trial.should_prune():
+                raise optuna.TrialPruned()
+            
+        return mean_loss
+        
+    def get_best_hyperparameters(self):
+        study = optuna.create_study(study_name="CF2 optimization")
+        study.optimize(self.optuna_objective, n_trials=15)
+        self.context.logger.info(f"Best hyperparamteres found: {study.best_params}")
+        return study.best_params
 
 class ExplainModelGraph(torch.nn.Module):
     
