@@ -1,4 +1,4 @@
 {
     "class": "src.explainer.generative.clear.CLEARExplainer",
-    "parameters": { "epochs": 1 }
+    "parameters": { "epochs": 20, "optimize_hyperparameters": true}
 }
