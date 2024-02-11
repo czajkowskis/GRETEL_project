@@ -128,7 +128,7 @@ class CF2Explainer(Trainable, Explainer):
     
     def optuna_objective(self, trial):
         lr =  trial.suggest_float("lr", 1e-4, 1e-1)
-        weight_decay = trial.suggest_float("weight_decay", 0, 1)
+        weight_decay = trial.suggest_float("weight_decay", 1e-5, 1)
         gamma = trial.suggest_float("gamma", 1e-6, 1e-2)
         lam = trial.suggest_float("lam", 1e-6, 1e-2)
         alpha = trial.suggest_float("alpha", 1e-6, 1e-2)

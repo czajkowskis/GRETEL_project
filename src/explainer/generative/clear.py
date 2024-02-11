@@ -15,6 +15,8 @@ from src.dataset.utils.dataset_torch import TorchDataset
 from src.utils.logger import GLogger
 from src.utils.utils import pad_adj_matrix
 
+import optuna
+
 
 class CLEARExplainer(Trainable, Explainer):
 
@@ -38,6 +40,7 @@ class CLEARExplainer(Trainable, Explainer):
         self.beta_x = self.local_config['parameters']['beta_x']
         self.beta_adj = self.local_config['parameters']['beta_adj']
         self.n_nodes = self.local_config['parameters']['n_nodes']
+        self.optimize_hyperparameters = self.local_config['parameters']['optimize_hyperparameters']
 
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -89,65 +92,148 @@ class CLEARExplainer(Trainable, Explainer):
             return cf_instance
 
     def real_fit(self):
-        train_loader = DataLoader(
-            self.dataset.get_torch_instances(fold_id=self.fold_id,
-                                             dataset_kls='src.explainer.generative.clear.CLEARDataset',
-                                             max_nodes=self.n_nodes), 
-            batch_size=self.batch_size, shuffle=True, drop_last=True)
-        
-        for epoch in range(self.epochs):
-            self.model.train()
+        if self.optimize_hyperparameters:
+            best_hyperparameters = self.get_best_hyperparameters()
             
-            batch_num = 0
-            loss, loss_kl, loss_sim, loss_cfe, loss_kl_cf = 0, 0, 0, 0, 0
-            for adj, features, labels, causality in train_loader:
-                batch_num += 1
-                # send the tensors to the device chosen
-                features = features.float().to(self.device)
-                causality = causality.float().to(self.device)
-                adj = adj.float().to(self.device)
-                labels = (1 - labels.float()).to(self.device)[:,None]
-                ########################################################
-                self.optimizer.zero_grad()
-                # forward pass
-                retr = self.model(features, causality, adj, labels)
-                # z_cf
-                z_mu_cf, z_logvar_cf = self.model.encoder(
-                    retr['features_reconst'], 
-                    causality, 
-                    retr['adj_reconst'], 
-                    labels)
-                # compute loss
-                loss_params = {
-                    'model': self.model,
-                    'oracle': self.oracle,
-                    'adj_input': adj,
-                    'features_input': features,
-                    'y_cf': labels,
-                    'z_mu_cf': z_mu_cf,
-                    'z_logvar_cf': z_logvar_cf
-                }
-                loss_params.update(retr)
+            self.model = CLEAR(feature_dim=self.feature_dim,
+                graph_pool_type=self.graph_pool_type,
+                encoder_type=self.encoder_type,
+                n_nodes=self.n_nodes,
+                h_dim=self.h_dim,
+                z_dim=self.z_dim,
+                dropout=best_hyperparameters['dropout'],
+                disable_u=self.disable_u,
+                device=self.device).to(self.device)
+                        
+            self.optimizer = torch.optim.Adam(self.model.parameters(),
+                                            lr=best_hyperparameters['lr'],
+                                            weight_decay=best_hyperparameters['weight_decay'])
+            
+            self.lambda_sim = best_hyperparameters['lambda_sim']
+            self.lambda_kl = best_hyperparameters['lambda_kl']
+            self.lambda_cfe = best_hyperparameters['lambda_cfe']
+
+            train_loader = DataLoader(
+                self.dataset.get_torch_instances(fold_id=self.fold_id,
+                                                dataset_kls='src.explainer.generative.clear.CLEARDataset',
+                                                max_nodes=self.n_nodes), 
+                batch_size=self.batch_size, shuffle=True, drop_last=True)
+            
+            for epoch in range(self.epochs):
+                self.model.train()
                 
-                loss_results = self.__compute_loss(loss_params)
-                loss_batch, loss_kl_batch, loss_sim_batch, loss_cfe_batch, loss_kl_batch_cf = loss_results['loss'],\
-                    loss_results['loss_kl'], loss_results['loss_sim'], loss_results['loss_cfe'], loss_results['loss_kl_cf']
+                batch_num = 0
+                loss, loss_kl, loss_sim, loss_cfe, loss_kl_cf = 0, 0, 0, 0, 0
+                for adj, features, labels, causality in train_loader:
+                    batch_num += 1
+                    # send the tensors to the device chosen
+                    features = features.float().to(self.device)
+                    causality = causality.float().to(self.device)
+                    adj = adj.float().to(self.device)
+                    labels = (1 - labels.float()).to(self.device)[:,None]
+                    ########################################################
+                    self.optimizer.zero_grad()
+                    # forward pass
+                    retr = self.model(features, causality, adj, labels)
+                    # z_cf
+                    z_mu_cf, z_logvar_cf = self.model.encoder(
+                        retr['features_reconst'], 
+                        causality, 
+                        retr['adj_reconst'], 
+                        labels)
+                    # compute loss
+                    loss_params = {
+                        'model': self.model,
+                        'oracle': self.oracle,
+                        'adj_input': adj,
+                        'features_input': features,
+                        'y_cf': labels,
+                        'z_mu_cf': z_mu_cf,
+                        'z_logvar_cf': z_logvar_cf
+                    }
+                    loss_params.update(retr)
                     
-                loss += loss_batch
-                loss_kl += loss_kl_batch
-                loss_sim += loss_sim_batch
-                loss_cfe += loss_cfe_batch
-                loss_kl_cf += loss_kl_batch_cf
+                    loss_results = self.__compute_loss(loss_params)
+                    loss_batch, loss_kl_batch, loss_sim_batch, loss_cfe_batch, loss_kl_batch_cf = loss_results['loss'],\
+                        loss_results['loss_kl'], loss_results['loss_sim'], loss_results['loss_cfe'], loss_results['loss_kl_cf']
+                        
+                    loss += loss_batch
+                    loss_kl += loss_kl_batch
+                    loss_sim += loss_sim_batch
+                    loss_cfe += loss_cfe_batch
+                    loss_kl_cf += loss_kl_batch_cf
+                    
+                loss, loss_kl, loss_sim, loss_cfe, loss_kl_cf = loss / batch_num, loss_kl / batch_num, loss_sim / batch_num, loss_cfe / batch_num, loss_kl_cf / batch_num
                 
-            loss, loss_kl, loss_sim, loss_cfe, loss_kl_cf = loss / batch_num, loss_kl / batch_num, loss_sim / batch_num, loss_cfe / batch_num, loss_kl_cf / batch_num
+                self.context.logger.info(f'Epoch {epoch+1} ---> loss {loss}')
+                # backward
+                alpha = self.alpha if epoch >= 450 else 0
+                ((loss_sim + loss_kl + alpha * loss_cfe) / batch_num).backward()        
+                self.optimizer.step()
             
-            self.context.logger.info(f'Epoch {epoch+1} ---> loss {loss}')
-            # backward
-            alpha = self.alpha if epoch >= 450 else 0
-            ((loss_sim + loss_kl + alpha * loss_cfe) / batch_num).backward()        
-            self.optimizer.step()
-        
-        self.model._fitted = True
+            self.model._fitted = True
+
+        else:
+
+            train_loader = DataLoader(
+                self.dataset.get_torch_instances(fold_id=self.fold_id,
+                                                dataset_kls='src.explainer.generative.clear.CLEARDataset',
+                                                max_nodes=self.n_nodes), 
+                batch_size=self.batch_size, shuffle=True, drop_last=True)
+            
+            for epoch in range(self.epochs):
+                self.model.train()
+                
+                batch_num = 0
+                loss, loss_kl, loss_sim, loss_cfe, loss_kl_cf = 0, 0, 0, 0, 0
+                for adj, features, labels, causality in train_loader:
+                    batch_num += 1
+                    # send the tensors to the device chosen
+                    features = features.float().to(self.device)
+                    causality = causality.float().to(self.device)
+                    adj = adj.float().to(self.device)
+                    labels = (1 - labels.float()).to(self.device)[:,None]
+                    ########################################################
+                    self.optimizer.zero_grad()
+                    # forward pass
+                    retr = self.model(features, causality, adj, labels)
+                    # z_cf
+                    z_mu_cf, z_logvar_cf = self.model.encoder(
+                        retr['features_reconst'], 
+                        causality, 
+                        retr['adj_reconst'], 
+                        labels)
+                    # compute loss
+                    loss_params = {
+                        'model': self.model,
+                        'oracle': self.oracle,
+                        'adj_input': adj,
+                        'features_input': features,
+                        'y_cf': labels,
+                        'z_mu_cf': z_mu_cf,
+                        'z_logvar_cf': z_logvar_cf
+                    }
+                    loss_params.update(retr)
+                    
+                    loss_results = self.__compute_loss(loss_params)
+                    loss_batch, loss_kl_batch, loss_sim_batch, loss_cfe_batch, loss_kl_batch_cf = loss_results['loss'],\
+                        loss_results['loss_kl'], loss_results['loss_sim'], loss_results['loss_cfe'], loss_results['loss_kl_cf']
+                        
+                    loss += loss_batch
+                    loss_kl += loss_kl_batch
+                    loss_sim += loss_sim_batch
+                    loss_cfe += loss_cfe_batch
+                    loss_kl_cf += loss_kl_batch_cf
+                    
+                loss, loss_kl, loss_sim, loss_cfe, loss_kl_cf = loss / batch_num, loss_kl / batch_num, loss_sim / batch_num, loss_cfe / batch_num, loss_kl_cf / batch_num
+                
+                self.context.logger.info(f'Epoch {epoch+1} ---> loss {loss}')
+                # backward
+                alpha = self.alpha if epoch >= 450 else 0
+                ((loss_sim + loss_kl + alpha * loss_cfe) / batch_num).backward()        
+                self.optimizer.step()
+            
+            self.model._fitted = True
         
     def __compute_loss(self, params):
         _, oracle, z_mu, z_logvar, adj_permuted, features_permuted, adj_reconst, features_reconst, \
@@ -191,6 +277,104 @@ class CLEARExplainer(Trainable, Explainer):
         loss_results = {'loss': loss, 'loss_kl': loss_kl, 'loss_sim': loss_sim, 'loss_cfe': loss_cfe, 'loss_kl_cf':loss_kl_cf}
         return loss_results  
     
+    def optuna_objective(self, trial):
+        lr = trial.suggest_float("lr", 1e-4, 1e-1)
+        weight_decay = trial.suggest_float("weight_decay", 1e-5, 1)
+        dropout = trial.suggest_float("dropout", 0, 1)
+        lambda_sim = trial.suggest_float("lambda_sim", 1e-3, 1)
+        lambda_kl = trial.suggest_float("lambda_kl", 1e-3, 1)
+        lambda_cfe = trial.suggest_float("lambda_cfe", 1e-3, 1)
+
+        # setting values for _compute_loss function
+        self.lambda_sim = lambda_sim
+        self.lambda_kl = lambda_kl
+        self. lambda_cfe = lambda_cfe
+
+        
+        model = CLEAR(feature_dim=self.feature_dim,
+                        graph_pool_type=self.graph_pool_type,
+                        encoder_type=self.encoder_type,
+                        n_nodes=self.n_nodes,
+                        h_dim=self.h_dim,
+                        z_dim=self.z_dim,
+                        dropout=dropout,
+                        disable_u=self.disable_u,
+                        device=self.device).to(self.device)
+        
+        optimizer = torch.optim.Adam(self.model.parameters(),
+                                        lr=lr,
+                                        weight_decay=weight_decay)
+        
+        train_loader = DataLoader(
+            self.dataset.get_torch_instances(fold_id=self.fold_id,
+                                             dataset_kls='src.explainer.generative.clear.CLEARDataset',
+                                             max_nodes=self.n_nodes), 
+            batch_size=self.batch_size, shuffle=True, drop_last=True)
+        
+        for epoch in range(self.epochs):
+            model.train()
+            
+            batch_num = 0
+            loss, loss_kl, loss_sim, loss_cfe, loss_kl_cf = 0, 0, 0, 0, 0
+            for adj, features, labels, causality in train_loader:
+                batch_num += 1
+                # send the tensors to the device chosen
+                features = features.float().to(self.device)
+                causality = causality.float().to(self.device)
+                adj = adj.float().to(self.device)
+                labels = (1 - labels.float()).to(self.device)[:,None]
+                ########################################################
+                optimizer.zero_grad()
+                # forward pass
+                retr = model(features, causality, adj, labels)
+                # z_cf
+                z_mu_cf, z_logvar_cf = model.encoder(
+                    retr['features_reconst'], 
+                    causality, 
+                    retr['adj_reconst'], 
+                    labels)
+                # compute loss
+                loss_params = {
+                    'model': model,
+                    'oracle': self.oracle,
+                    'adj_input': adj,
+                    'features_input': features,
+                    'y_cf': labels,
+                    'z_mu_cf': z_mu_cf,
+                    'z_logvar_cf': z_logvar_cf
+                }
+                loss_params.update(retr)
+                
+                loss_results = self.__compute_loss(loss_params)
+                loss_batch, loss_kl_batch, loss_sim_batch, loss_cfe_batch, loss_kl_batch_cf = loss_results['loss'],\
+                    loss_results['loss_kl'], loss_results['loss_sim'], loss_results['loss_cfe'], loss_results['loss_kl_cf']
+                    
+                loss += loss_batch
+                loss_kl += loss_kl_batch
+                loss_sim += loss_sim_batch
+                loss_cfe += loss_cfe_batch
+                loss_kl_cf += loss_kl_batch_cf
+                
+            loss, loss_kl, loss_sim, loss_cfe, loss_kl_cf = loss / batch_num, loss_kl / batch_num, loss_sim / batch_num, loss_cfe / batch_num, loss_kl_cf / batch_num
+            
+            self.context.logger.info(f'Epoch {epoch+1} ---> loss {loss}')
+
+            trial.report(loss, epoch + 1)
+            if trial.should_prune():
+                raise optuna.TrialPruned()
+            
+            # backward
+            alpha = self.alpha if epoch >= 450 else 0
+            ((loss_sim + loss_kl + alpha * loss_cfe) / batch_num).backward()        
+            optimizer.step()
+        return loss
+    
+    def get_best_hyperparameters(self):
+        study = optuna.create_study(study_name="CLEAR optimization")
+        study.optimize(self.optuna_objective, n_trials=15)
+        self.context.logger.info(f"Best hyperparamteres found: {study.best_params}")
+        return study.best_params
+    
     
     def __distance_feature(self, feat_1, feat_2):
         pdist = nn.PairwiseDistance(p=2)
@@ -218,6 +402,7 @@ class CLEARExplainer(Trainable, Explainer):
         self.local_config['parameters']['lambda_cfe'] =  self.local_config['parameters'].get('lambda_cfe', 1)
         self.local_config['parameters']['beta_x'] =  self.local_config['parameters'].get('beta_x', 10)
         self.local_config['parameters']['beta_adj'] =  self.local_config['parameters'].get('beta_adj', 10)
+        self.local_config['parameters']['optimize_hyperparameters'] = self.local_config['parameters'].get('optimize_hyperparameters', False)
 
         n_nodes = max([x.num_nodes for x in self.dataset.instances])
         self.local_config['parameters']['n_nodes'] = n_nodes

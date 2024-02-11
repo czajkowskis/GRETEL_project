@@ -140,7 +140,7 @@ class TorchBase(Trainable):
         num_dense_layers = trial.suggest_int("num_dense_layers",1,5,log=True)
         conv_booster = trial.suggest_float("conv_booster",0,3)
         linear_decay = trial.suggest_float("linear_decay",0,3)
-        model_parameters = {"num_conv_layers": num_conv_layers, "num_dense_layers": num_dense_layers, "conv_booster": conv_booster, "linear_decay": linear_decay, "node_features": 7, "n_classes": 2}
+        model_parameters = {"num_conv_layers": num_conv_layers, "num_dense_layers": num_dense_layers, "conv_booster": conv_booster, "linear_decay": linear_decay, "node_features": self.dataset.num_node_features(), "n_classes": self.dataset.num_classes}
         model = get_instance_kvargs(self.local_config['parameters']['model']['class'],
                                      model_parameters)
         
@@ -192,4 +192,4 @@ class TorchBase(Trainable):
         study = optuna.create_study(study_name="GCN optimization")
         study.optimize(self.optuna_objective_GCN, n_trials=15)
         self.context.logger.info(f"Best hyperparamteres found: {study.best_params}")
-        return {"num_conv_layers": study.best_params['num_conv_layers'], "num_dense_layers": study.best_params['num_dense_layers'], "conv_booster":study.best_params['conv_booster'], "linear_decay":study.best_params['linear_decay'], "node_features": 7, "n_classes": 2}
+        return {"num_conv_layers": study.best_params['num_conv_layers'], "num_dense_layers": study.best_params['num_dense_layers'], "conv_booster":study.best_params['conv_booster'], "linear_decay":study.best_params['linear_decay'], "node_features": self.dataset.num_node_features(), "n_classes": self.dataset.num_classes}
