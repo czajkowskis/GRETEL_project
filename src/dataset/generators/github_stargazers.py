@@ -9,7 +9,7 @@ class GithubStargazersGenerator(Generator):
     def init(self):
         self.data_path = self.local_config['parameters']['data_path']
         self.max_node_count = self.local_config['parameters']['max_node_count']
-        self.num_count_divisibility = self.local_config['parameters']['node_count_divisibility']
+        self.node_count_divisibility = self.local_config['parameters']['node_count_divisibility']
         self.generate_dataset()
 
     def check_configuration(self):
@@ -39,9 +39,11 @@ class GithubStargazersGenerator(Generator):
         filtered = np.arange(len(node_counts)) # Thake them all to start
         if self.max_node_count > -1:
             filtered_relative = np.where(node_counts[filtered] < self.max_node_count)[0]
+            # np.where will return indices relative to node_counts[filtered].
+            # This makes indices relative to the whole node_counts
             filtered = filtered[filtered_relative]
         if self.node_count_divisibility > -1:
-            filtered = np.where(node_counts[filtered] % self.node_count_divisibility == 0)[0]
+            filtered_relative = np.where(node_counts[filtered] % self.node_count_divisibility == 0)[0]
             filtered = filtered[filtered_relative]
 
         self.context.logger.info(f"Generating {len(filtered)} graphs")
