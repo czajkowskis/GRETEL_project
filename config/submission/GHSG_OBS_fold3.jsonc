@@ -10,8 +10,12 @@
             ]
         }
     },
-
-    "do-pairs": [ { "compose_ghsg_gcn": "config/submission/snippets/do-pairs/GHSG.jsonc" } ],
+    "do-pairs": [
+        {
+            "dataset": { "compose_dataset": "config/submission/snippets/datasets/GHSG_regular.jsonc" },
+            "oracle": { "compose_oracle": "config/submission/snippets/oracles/GHSG_GCN.jsonc" }
+        }
+    ],
     "explainers": [ { "class": "src.explainer.heuristic.obs.ObliviousBidirectionalSearchExplainer", "parameters": { "fold_id": 3 } } ],
     "compose_mes": "config/snippets/default_metrics.json",
     "compose_strs": "config/snippets/default_store_paths.json"
