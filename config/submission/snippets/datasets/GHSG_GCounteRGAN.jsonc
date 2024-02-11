@@ -1,0 +1,9 @@
+{
+    "class": "src.dataset.dataset_base.Dataset",
+    "parameters": {
+        "generator": {
+            "class": "src.dataset.generators.github_stargazers.GithubStargazersGenerator",
+            "parameters": { "data_path": "data/datasets/github_stargazers", "node_count_divisibility": 4, "max_node_count": 13 }
+        }
+    }
+}
