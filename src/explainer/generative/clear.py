@@ -41,6 +41,7 @@ class CLEARExplainer(Trainable, Explainer):
         self.beta_adj = self.local_config['parameters']['beta_adj']
         self.n_nodes = self.local_config['parameters']['n_nodes']
         self.optimize_hyperparameters = self.local_config['parameters']['optimize_hyperparameters']
+        self.seed = self.local_config['parameters']['seed']
 
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -370,8 +371,10 @@ class CLEARExplainer(Trainable, Explainer):
         return loss
     
     def get_best_hyperparameters(self):
-        study = optuna.create_study(study_name="CLEAR optimization")
-        study.optimize(self.optuna_objective, n_trials=15)
+        self.context.logger.info("Performing hyperparameter search")
+        sampler = optuna.samplers.TPESampler(seed=self.seed)
+        study = optuna.create_study(study_name="CLEAR optimization", sampler=sampler)
+        study.optimize(self.optuna_objective, n_trials=10)
         self.context.logger.info(f"Best hyperparamteres found: {study.best_params}")
         return study.best_params
     
@@ -403,6 +406,7 @@ class CLEARExplainer(Trainable, Explainer):
         self.local_config['parameters']['beta_x'] =  self.local_config['parameters'].get('beta_x', 10)
         self.local_config['parameters']['beta_adj'] =  self.local_config['parameters'].get('beta_adj', 10)
         self.local_config['parameters']['optimize_hyperparameters'] = self.local_config['parameters'].get('optimize_hyperparameters', False)
+        self.local_config['parameters']['seed'] = self.local_config['parameters'].get('seed', 10)
 
         n_nodes = max([x.num_nodes for x in self.dataset.instances])
         self.local_config['parameters']['n_nodes'] = n_nodes

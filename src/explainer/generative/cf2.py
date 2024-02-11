@@ -32,6 +32,7 @@ class CF2Explainer(Trainable, Explainer):
         )
 
         self.optimize_hyperparameters = self.local_config['parameters']['optimize_hyperparameters']
+        self.seed = self.local_config['parameters']['seed']
 
     def check_configuration(self):
         super().check_configuration()
@@ -43,6 +44,7 @@ class CF2Explainer(Trainable, Explainer):
         self.local_config['parameters']['alpha'] =  self.local_config['parameters'].get('alpha', 1e-4)
         self.local_config['parameters']['epochs'] =  self.local_config['parameters'].get('epochs', 200)
         self.local_config['parameters']['optimize_hyperparameters'] = self.local_config['parameters'].get('optimize_hyperparameters', False)
+        self.local_config['parameters']['seed'] = self.local_config['parameters'].get('seed', 10)
 
         # fix the number of nodes
         n_nodes = self.local_config['parameters'].get('n_nodes', None)
@@ -163,8 +165,10 @@ class CF2Explainer(Trainable, Explainer):
         return mean_loss
         
     def get_best_hyperparameters(self):
-        study = optuna.create_study(study_name="CF2 optimization")
-        study.optimize(self.optuna_objective, n_trials=15)
+        self.context.logger.info("Performing hyperparameter search")
+        sampler = optuna.samplers.TPESampler(seed=self.seed)
+        study = optuna.create_study(study_name="CF2 optimization", sampler=sampler)
+        study.optimize(self.optuna_objective, n_trials=10)
         self.context.logger.info(f"Best hyperparamteres found: {study.best_params}")
         return study.best_params
 
