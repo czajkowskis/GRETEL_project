@@ -36,12 +36,13 @@ class GithubStargazersGenerator(Generator):
         graph_ids, node_counts = np.unique(graph_indicator, return_counts=True)
 
         # Filtered has the indices of graph_ids for which a graph will be created
+        filtered = np.arange(len(node_counts)) # Thake them all to start
         if self.max_node_count > -1:
-            filtered = np.where(node_counts < self.max_node_count)[0]
-        elif self.node_count_divisibility > -1:
-            filtered = np.where(node_counts % self.node_count_divisibility == 0)[0]
-        else:
-            filtered = np.arange(len(graph_ids)) # Take them all
+            filtered_relative = np.where(node_counts[filtered] < self.max_node_count)[0]
+            filtered = filtered[filtered_relative]
+        if self.node_count_divisibility > -1:
+            filtered = np.where(node_counts[filtered] % self.node_count_divisibility == 0)[0]
+            filtered = filtered[filtered_relative]
 
         self.context.logger.info(f"Generating {len(filtered)} graphs")
         for iteration, graph_id in enumerate(graph_ids[filtered], start=1):
