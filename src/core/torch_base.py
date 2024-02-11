@@ -15,6 +15,7 @@ class TorchBase(Trainable):
         self.epochs = self.local_config['parameters']['epochs']
         self.batch_size = self.local_config['parameters']['batch_size']
         self.optimize_hyperparameters_GCN = self.local_config['parameters']['optimize_hyperparameters_GCN']
+        self.seed = self.local_config['parameters']['seed']
         
         self.model = get_instance_kvargs(self.local_config['parameters']['model']['class'],
                                    self.local_config['parameters']['model']['parameters'])
@@ -42,7 +43,6 @@ class TorchBase(Trainable):
             get_instance_kvargs(self.local_config['parameters']['model']['class'],
                                 self.get_best_hyperparameters())
             
-            self.context.logger.info("Retraining the best found model")
             loader = self.dataset.get_torch_loader(fold_id=self.fold_id, batch_size=self.batch_size, usage='train')
             
             for epoch in range(self.epochs):
@@ -71,6 +71,7 @@ class TorchBase(Trainable):
                 accuracy = self.accuracy(labels_list, preds)
                 self.context.logger.info(f'epoch = {epoch} ---> loss = {np.mean(losses):.4f}\t accuracy = {accuracy:.4f}')
                 self.lr_scheduler.step()
+                
         else:
             self.context.logger.info("Training the model without hyperparameter optimization")
             loader = self.dataset.get_torch_loader(fold_id=self.fold_id, batch_size=self.batch_size, usage='train')
@@ -109,6 +110,7 @@ class TorchBase(Trainable):
         local_config['parameters']['epochs'] = local_config['parameters'].get('epochs', 200)
         local_config['parameters']['batch_size'] = local_config['parameters'].get('batch_size', 4)
         local_config['parameters']['optimize_hyperparameters_GCN'] = local_config['parameters'].get('optimize_hyperparameters_GCN', False)
+        local_config['parameters']['seed'] = local_config['parameters'].get('seed', 10)
         # populate the optimizer
         init_dflts_to_of(local_config, 'optimizer', 'torch.optim.Adam',lr=0.001)
         init_dflts_to_of(local_config, 'loss_fn', 'torch.nn.BCELoss')
@@ -189,7 +191,8 @@ class TorchBase(Trainable):
         return mean_loss
     
     def get_best_hyperparameters(self):
-        study = optuna.create_study(study_name="GCN optimization")
+        sampler = optuna.samplers.TPESampler(seed=self.seed)
+        study = optuna.create_study(study_name="GCN optimization", sampler=sampler)
         study.optimize(self.optuna_objective_GCN, n_trials=15)
         self.context.logger.info(f"Best hyperparamteres found: {study.best_params}")
         return {"num_conv_layers": study.best_params['num_conv_layers'], "num_dense_layers": study.best_params['num_dense_layers'], "conv_booster":study.best_params['conv_booster'], "linear_decay":study.best_params['linear_decay'], "node_features": self.dataset.num_node_features(), "n_classes": self.dataset.num_classes}
