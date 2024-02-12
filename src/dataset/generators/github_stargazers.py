@@ -8,7 +8,8 @@ class GithubStargazersGenerator(Generator):
 
     def init(self):
         self.data_path = self.local_config['parameters']['data_path']
-        self.max_number_nodes = self.local_config['parameters']['max_number_nodes']
+        self.max_node_count = self.local_config['parameters']['max_node_count']
+        self.node_count_divisibility = self.local_config['parameters']['node_count_divisibility']
         self.generate_dataset()
 
     def check_configuration(self):
@@ -17,7 +18,8 @@ class GithubStargazersGenerator(Generator):
 
         # set defaults
         local_config['parameters']['data_path'] = local_config['parameters'].get('data_path','data/datasets/github_stargazers')
-        local_config['parameters']['max_number_nodes'] = local_config['parameters'].get('max_number_nodes', 200)
+        local_config['parameters']['max_node_count'] = local_config['parameters'].get('max_node_count', -1)
+        local_config['parameters']['node_count_divisibility'] = local_config['parameters'].get('node_count_divisibility', -1)
 
     def generate_dataset(self):
         if len(self.dataset.instances):
@@ -32,7 +34,17 @@ class GithubStargazersGenerator(Generator):
         graph_labels = np.loadtxt(graph_labels_path, dtype=int)
 
         graph_ids, node_counts = np.unique(graph_indicator, return_counts=True)
-        filtered = np.where(node_counts < self.max_number_nodes)[0]
+
+        # Filtered has the indices of graph_ids for which a graph will be created
+        filtered = np.arange(len(node_counts)) # Thake them all to start
+        if self.max_node_count > -1:
+            filtered_relative = np.where(node_counts[filtered] < self.max_node_count)[0]
+            # np.where will return indices relative to node_counts[filtered].
+            # This makes indices relative to the whole node_counts
+            filtered = filtered[filtered_relative]
+        if self.node_count_divisibility > -1:
+            filtered_relative = np.where(node_counts[filtered] % self.node_count_divisibility == 0)[0]
+            filtered = filtered[filtered_relative]
 
         self.context.logger.info(f"Generating {len(filtered)} graphs")
         for iteration, graph_id in enumerate(graph_ids[filtered], start=1):
