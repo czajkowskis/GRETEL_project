@@ -3,7 +3,7 @@
     "parameters": {
         "generator": {
             "class": "src.dataset.generators.github_stargazers.GithubStargazersGenerator",
-            "parameters": { "data_path": "data/datasets/github_stargazers", "node_count_divisibility": -1, "max_node_count": 150 }
+            "parameters": { "data_path": "data/datasets/github_stargazers", "node_count_divisibility": -1, "max_node_count": 100 }
         }
     }
 }
