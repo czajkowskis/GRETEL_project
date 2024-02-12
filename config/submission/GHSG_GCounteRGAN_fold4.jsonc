@@ -1,6 +1,6 @@
 {
     "experiment": {
-        "scope": "examples_configs",
+        "scope": "GCounteRGAN_explainer",
         "parameters": {
             "lock_release_tout": 120,
             "propagate": [
