@@ -374,7 +374,7 @@ class CLEARExplainer(Trainable, Explainer):
         self.context.logger.info("Performing hyperparameter search")
         sampler = optuna.samplers.TPESampler(seed=self.seed)
         study = optuna.create_study(study_name="CLEAR optimization", sampler=sampler)
-        study.optimize(self.optuna_objective, n_trials=10)
+        study.optimize(self.optuna_objective, n_trials=5)
         self.context.logger.info(f"Best hyperparamteres found: {study.best_params}")
         return study.best_params
     
